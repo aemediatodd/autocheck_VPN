@@ -1,0 +1,17 @@
+{
+  "domain": "autocheck_vpn",
+  "name": "autocheck_VPN",
+  "version": "0.1.0",
+  "config_flow": true,
+  "documentation": "https://github.com/aemediatodd/autocheck_VPN",
+  "codeowners": [
+    "@aemediatodd"
+  ],
+  "iot_class": "cloud_polling",
+  "integration_type": "service",
+  "requirements": [],
+  "dependencies": [
+    "persistent_notification"
+  ],
+  "issue_tracker": "https://github.com/aemediatodd/autocheck_VPN/issues"
+}

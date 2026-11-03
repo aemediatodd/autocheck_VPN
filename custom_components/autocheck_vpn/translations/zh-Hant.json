@@ -1,0 +1,140 @@
+{
+  "title": "autocheck_VPN",
+  "config": {
+    "step": {
+      "login": {
+        "title": "域名与登录方式",
+        "description": "域名变更后可在此重新配置。账户密码登录默认记住我。",
+        "data": {
+          "base_url": "网页域名",
+          "login_method": "登录方式"
+        }
+      },
+      "password": {
+        "title": "账户密码登录",
+        "description": "默认记住我。若网站要求极验，请先运行 tools/verify.py，在浏览器登录后，将 .local/session-cookie.json 的完整内容粘贴到登录会话。已有会话时可留空账户和密码。",
+        "data": {
+          "email": "账户 / 邮箱",
+          "password": "密码",
+          "session_cookie": "登录会话（极验或二次验证后导入）"
+        }
+      },
+      "telegram": {
+        "title": "Telegram 机器人登录",
+        "description": "本次六位验证码：**{code}**\n\n请手动发送给机器人 **@{bot}**。发送后点击提交检查登录结果；未确认可再次提交。验证码仅用于本次登录。"
+      }
+    },
+    "error": {
+      "invalid_url": "请输入 HTTPS 根域名，例如 https://vpn.example.com，不要包含 /user。",
+      "invalid_auth": "登录失败或会话失效，请重新登录。",
+      "invalid_cookie": "会话格式无效，请粘贴本机验证工具生成的 session-cookie.json 内容。",
+      "cannot_connect": "无法连接或网站结构已变化，请检查域名、网络及集成版本。",
+      "verification_required": "网站要求极验或二次验证。请运行配套浏览器工具完成账户密码登录，再在下方粘贴导出的会话内容。默认已勾选记住我。",
+      "telegram_pending": "机器人尚未确认，请发送六位码后再次提交。",
+      "telegram_expired": "验证码已过期，再次提交以获取新的六位码。",
+      "invalid_schedule": "时间或时区格式不正确，例如 09:00:00、Asia/Hong_Kong。"
+    },
+    "abort": {
+      "reauth_successful": "已重新登录。",
+      "reconfigure_successful": "配置已更新。"
+    }
+  },
+  "options": {
+    "step": {
+      "login": {
+        "title": "域名与登录方式",
+        "description": "域名变更后可在此重新配置。账户密码登录默认记住我。",
+        "data": {
+          "base_url": "网页域名",
+          "login_method": "登录方式"
+        }
+      },
+      "password": {
+        "title": "账户密码登录",
+        "description": "默认记住我。若网站要求极验，请先运行 tools/verify.py，在浏览器登录后，将 .local/session-cookie.json 的完整内容粘贴到登录会话。已有会话时可留空账户和密码。",
+        "data": {
+          "email": "账户 / 邮箱",
+          "password": "密码",
+          "session_cookie": "登录会话（极验或二次验证后导入）"
+        }
+      },
+      "telegram": {
+        "title": "Telegram 机器人登录",
+        "description": "本次六位验证码：**{code}**\n\n请手动发送给机器人 **@{bot}**。发送后点击提交检查登录结果；未确认可再次提交。验证码仅用于本次登录。"
+      },
+      "settings": {
+        "title": "自动签到设置",
+        "description": "浮动分钟数表示基准时间前后各可浮动的范围，最多 ±300 分钟（5 小时）。靠近午夜时限制在当天。",
+        "data": {
+          "auto_checkin": "启用自动签到",
+          "checkin_time": "每日签到基准时间",
+          "jitter_minutes": "上下浮动分钟数（0–300）",
+          "timezone": "网站及签到时区",
+          "notify_success": "签到成功时显示通知"
+        }
+      },
+      "init": {
+        "title": "autocheck_VPN 配置",
+        "menu_options": {
+          "settings": "自动签到设置",
+          "login": "修改域名 / 重新登录"
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "请输入 HTTPS 根域名，例如 https://vpn.example.com，不要包含 /user。",
+      "invalid_auth": "登录失败或会话失效，请重新登录。",
+      "invalid_cookie": "会话格式无效，请粘贴本机验证工具生成的 session-cookie.json 内容。",
+      "cannot_connect": "无法连接或网站结构已变化，请检查域名、网络及集成版本。",
+      "verification_required": "网站要求极验或二次验证。请运行配套浏览器工具完成账户密码登录，再在下方粘贴导出的会话内容。默认已勾选记住我。",
+      "telegram_pending": "机器人尚未确认，请发送六位码后再次提交。",
+      "telegram_expired": "验证码已过期，再次提交以获取新的六位码。",
+      "invalid_schedule": "时间或时区格式不正确，例如 09:00:00、Asia/Hong_Kong。"
+    }
+  },
+  "selector": {
+    "login_method": {
+      "options": {
+        "password": "账户密码（默认记住我）",
+        "telegram": "Telegram 机器人六位码"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "签到状态",
+        "state": {
+          "unknown": "等待检查",
+          "ready": "今日待签到",
+          "checked_in": "当天签到成功",
+          "login_required": "需要登录",
+          "error": "签到或网页检查失败"
+        }
+      },
+      "total": {
+        "name": "累计签到成功次数"
+      },
+      "streak": {
+        "name": "当前连续签到成功天数"
+      },
+      "last_success": {
+        "name": "最近签到成功时间"
+      },
+      "last_reward": {
+        "name": "最近签到流量奖励"
+      },
+      "next_run": {
+        "name": "下次自动签到时间"
+      }
+    },
+    "button": {
+      "checkin": {
+        "name": "手动签到"
+      },
+      "refresh": {
+        "name": "刷新登录与签到状态"
+      }
+    }
+  }
+}
