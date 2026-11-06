@@ -139,13 +139,16 @@ def test_helper_posts_session_without_writing_credentials(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_browser_helper_remembers_and_returns_without_checkin(monkeypatch):
+@pytest.mark.parametrize("navigation_fails", [False, True])
+async def test_browser_helper_remembers_and_returns_without_checkin(monkeypatch, navigation_fails):
     import playwright.async_api
     helper = helper_module()
-    remember = SimpleNamespace(check=AsyncMock())
-    page = SimpleNamespace(goto=AsyncMock(), locator=Mock(return_value=remember), wait_for_url=AsyncMock(), wait_for_selector=AsyncMock())
+    page = SimpleNamespace(goto=AsyncMock(), evaluate=AsyncMock(return_value=True),
+        is_closed=lambda: False, url="https://vpn.example.com/user", wait_for_selector=AsyncMock())
+    if navigation_fails:
+        page.goto.side_effect = playwright.async_api.Error("navigation failed")
     context = SimpleNamespace(new_page=AsyncMock(return_value=page), cookies=AsyncMock(return_value=[{"name": "sid", "value": "fake"}]))
-    browser = SimpleNamespace(new_context=AsyncMock(return_value=context), close=AsyncMock())
+    browser = SimpleNamespace(new_context=AsyncMock(return_value=context), close=AsyncMock(), is_connected=lambda: True)
     p = SimpleNamespace(chromium=SimpleNamespace(launch=AsyncMock(return_value=browser)))
     class Playwright:
         async def __aenter__(self):
@@ -156,7 +159,8 @@ async def test_browser_helper_remembers_and_returns_without_checkin(monkeypatch)
     handoff = Mock()
     monkeypatch.setattr(helper, "handoff", handoff)
     await helper.browser_login("https://vpn.example.com", "http://ha.local/api/autocheck_vpn/browser_login", "a" * 64, "msedge")
-    remember.check.assert_awaited_once()
+    page.evaluate.assert_awaited_once()
+    assert "box.checked = true" in page.evaluate.call_args.args[0]
     handoff.assert_called_once()
     assert page.goto.call_args.args[0].endswith("/auth/login")
     assert page.goto.await_count == 1

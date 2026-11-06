@@ -73,18 +73,58 @@ def handoff(callback, token, cookies):
 
 
 async def browser_login(site, callback, token, channel):
-    from playwright.async_api import async_playwright
+    from playwright.async_api import async_playwright, Error as BrowserError, TimeoutError as BrowserTimeout
     async with async_playwright() as p:
         browser = await p.chromium.launch(channel=channel, headless=False)
         try:
             context = await browser.new_context()
             page = await context.new_page()
-            await page.goto(site + "/auth/login", wait_until="domcontentloaded")
-            await page.locator("#remember-me").check()
-            await page.wait_for_url(site + "/user**", timeout=840000)
-            await page.wait_for_selector("#checkin-div", timeout=30000)
-            cookies = {cookie["name"]: cookie["value"] for cookie in await context.cookies(site)}
-            await asyncio.to_thread(handoff, callback, token, cookies)
+            try:
+                await page.goto(site + "/auth/login", wait_until="domcontentloaded", timeout=30000)
+            except BrowserError:
+                # Keep the window open: the user can refresh a failed or slow page.
+                pass
+            deadline = time.monotonic() + 840
+            remembered = False
+            while time.monotonic() < deadline:
+                if page.is_closed() or not browser.is_connected():
+                    raise ValueError("browser_closed")
+                try:
+                    parts = urlsplit(page.url)
+                    if parts.scheme + "://" + parts.netloc != site:
+                        await asyncio.sleep(0.5)
+                        continue
+                    if not remembered:
+                        # The site styles the native checkbox as hidden; clicking it
+                        # times out. Set its DOM property and dispatch form events.
+                        remembered = await page.evaluate("""() => {
+                            const box = document.querySelector('#remember-me');
+                            if (!box) return false;
+                            box.checked = true;
+                            box.dispatchEvent(new Event('input', {bubbles:true}));
+                            box.dispatchEvent(new Event('change', {bubbles:true}));
+                            return true;
+                        }""")
+                    if parts.path == "/user" or parts.path.startswith("/user/"):
+                        await page.wait_for_selector("#checkin-div", timeout=1000)
+                        cookies = {cookie["name"]: cookie["value"] for cookie in await context.cookies(site)}
+                        try:
+                            await asyncio.to_thread(handoff, callback, token, cookies)
+                        except Exception:
+                            # Keep browser context alive until the user closes it.
+                            # Only controlled error codes leave this function.
+                            notice = await context.new_page()
+                            await notice.set_content('<meta charset="utf-8"><h1>会话回传未成功</h1>'
+                                '<p>登录窗口已保留。请检查本机至 HA 的网络和链接有效期；关闭浏览器后返回 HA 重新生成登录链接。</p>')
+                            while browser.is_connected() and not page.is_closed():
+                                await asyncio.sleep(0.5)
+                            raise ValueError("handoff_failed") from None
+                        return
+                except (BrowserTimeout, BrowserError):
+                    # Temporary redirects and DOM replacement are normal at login.
+                    pass
+                await asyncio.sleep(0.5)
+            raise ValueError("login_timeout")
         finally:
             await browser.close()
 
@@ -149,8 +189,11 @@ class Handler(BaseHTTPRequestHandler):
             destination = f"{parts.scheme}://{parts.netloc}/config/integrations"
             self.html('<h1>登录已回传 HA</h1><p>会话已由 HA 验证。返回原来的配置对话框，点击提交完成配置。</p>'
                       + '<a href="' + escape(destination, quote=True) + '">返回 Home Assistant</a>')
-        except Exception:
-            self.html("登录或回传失败。请检查 HA 地址是否可由本机访问、网站登录是否成功、15 分钟链接是否过期；返回 HA 重新打开登录链接。", 400)
+        except Exception as error:
+            reasons = {"browser_closed": "登录浏览器被关闭。", "login_timeout": "等待登录超时，链接已接近过期。",
+                       "handoff_failed": "网站登录已完成，但会话未能回传 HA。"}
+            reason = reasons.get(str(error), "无法启动或继续登录浏览器。")
+            self.html(escape(reason) + " 请检查 HA 地址是否可由本机访问、网站登录是否成功、15 分钟链接是否过期；返回 HA 重新打开登录链接。", 400)
         finally:
             LOCK.release()
 
