@@ -130,7 +130,8 @@ async def test_telegram_pending_then_authenticated():
         assert not await client.telegram_finish(challenge)
         assert await client.telegram_finish(challenge)
         calls = client.request.await_args_list
-        assert calls[2].args == ("/auth/qrcode_login", {"number": "012345", "token": "test-token"})
+        assert calls[2].args == ("/auth/qrcode_login", {
+            "number": "012345", "token": "test-token", "remember_me": "on"})
     finally:
         await client.close()
 

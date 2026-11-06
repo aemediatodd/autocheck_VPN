@@ -14,11 +14,11 @@ errors = {
     "invalid_schedule": "时间或时区格式不正确，例如 09:00:00、Asia/Hong_Kong。",
 }
 steps = {
-    "login": {"title": "域名与登录方式", "description": "域名变更后可在此重新配置。账户密码登录默认记住我。",
+    "login": {"title": "域名与登录方式", "description": "域名变更后可在此重新配置。账户密码和 Telegram 登录均默认记住我。",
               "data": {"base_url": "网页域名", "login_method": "登录方式"}},
     "password": {"title": "账户密码登录", "description": "默认记住我。若网站要求极验，请先运行 tools/verify.py，在浏览器登录后，将 .local/session-cookie.json 的完整内容粘贴到登录会话。已有会话时可留空账户和密码。",
                  "data": {"email": "账户 / 邮箱", "password": "密码", "session_cookie": "登录会话（极验或二次验证后导入）"}},
-    "telegram": {"title": "Telegram 机器人登录", "description": "本次六位验证码：**{code}**\n\n请手动发送给机器人 **@{bot}**。发送后点击提交检查登录结果；未确认可再次提交。验证码仅用于本次登录。"},
+    "telegram": {"title": "Telegram 机器人登录", "description": "本次六位验证码：**{code}**\n\n请手动发送给机器人 **@{bot}**。发送后点击提交检查登录结果；未确认可再次提交。验证码仅用于本次登录。默认启用记住我，登录会话将保存并复用。"},
     "settings": {"title": "自动签到设置", "description": "浮动分钟数表示基准时间前后各可浮动的范围，最多 ±300 分钟（5 小时）。靠近午夜时限制在当天。",
                  "data": {"auto_checkin": "启用自动签到", "checkin_time": "每日签到基准时间", "jitter_minutes": "上下浮动分钟数（0–300）", "timezone": "网站及签到时区", "notify_success": "签到成功时显示通知"}},
     "init": {"title": "autocheck_VPN 配置", "menu_options": {"settings": "自动签到设置", "login": "修改域名 / 重新登录"}},

@@ -197,7 +197,7 @@ class AutoCheckClient:
             confirmed = False
         if not confirmed:
             return False
-        await self.post_json("/auth/qrcode_login", payload)
+        await self.post_json("/auth/qrcode_login", {**payload, "remember_me": "on"})
         await self.status()
         return True
 

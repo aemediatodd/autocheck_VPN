@@ -34,7 +34,7 @@ Home Assistant 自定义集成，为兼容网站提供每日自动签到、Teleg
 
 ### 手动安装
 
-1. 从 [Releases](https://github.com/aemediatodd/autocheck_VPN/releases) 下载 `autocheck_vpn-0.1.0.zip`。
+1. 从 [Releases](https://github.com/aemediatodd/autocheck_VPN/releases) 下载最新的 `autocheck_vpn-*.zip`。
 2. 将包内 `custom_components/autocheck_vpn` 复制到 HA 的 `/config/custom_components/autocheck_vpn`。
 3. 重启 HA，然后添加 **autocheck_VPN**。
 
@@ -51,6 +51,8 @@ Home Assistant 自定义集成，为兼容网站提供每日自动签到、Teleg
 3. 返回 HA 点击 **提交** 检查登录结果。尚未确认可再次提交；验证码过期后再次提交获取新码。
 
 需先按网站要求完成 Telegram 账户绑定，无需向本集成提供 Telegram API Key 或机器人 Token。
+
+Telegram 登录默认启用“记住我”，完成验证码确认时自动携带 `remember_me=on`。登录后保存并复用会话；实际有效期由网站决定。
 
 ### 账户密码与“记住我”
 
@@ -119,6 +121,6 @@ python -m ruff check custom_components tools tests
 python tools/build.py
 ```
 
-安装包输出到 `dist/autocheck_vpn-0.1.0.zip`。真实站点验证及测试范围见 [VALIDATION.md](VALIDATION.md)。
+安装包按组件版本输出到 `dist/autocheck_vpn-<版本>.zip`。真实站点验证及测试范围见 [VALIDATION.md](VALIDATION.md)。
 
 本机登录会话位于 `.local`，已加入忽略规则；发布构建只包含组件、验证工具和说明。自动跨域重定向被禁止，以便用户在域名变化时自行确认并更新配置。
