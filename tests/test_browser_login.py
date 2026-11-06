@@ -83,6 +83,47 @@ def test_helper_validates_callback_and_one_time_ticket():
             helper.parameters(urlencode({**values, **change}))
 
 
+@pytest.mark.parametrize("origin,expected", [("null", 200), (None, 200),
+    ("http://127.0.0.1:18765", 200), ("https://other.invalid", 403)])
+def test_confirmation_http_origin_and_replay(monkeypatch, origin, expected):
+    import threading
+    import urllib.request
+    import urllib.error
+    import re
+    helper = helper_module()
+    login = AsyncMock()
+    monkeypatch.setattr(helper, "browser_login", login)
+    server = helper.ThreadingHTTPServer(("127.0.0.1", 0), helper.Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    query = urlencode({"site": "https://vpn.example.com", "callback": "http://ha.local/api/autocheck_vpn/browser_login", "token": "a" * 64})
+    base = f"http://127.0.0.1:{server.server_port}"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        request = urllib.request.Request(base + "/?" + query, headers={"Host": "127.0.0.1:18765"})
+        with opener.open(request) as response:
+            html = response.read().decode()
+        nonce = re.search(r'name="nonce" value="([a-f0-9]+)"', html)[1]
+        headers = {"Host": "127.0.0.1:18765", "Content-Type": "application/x-www-form-urlencoded"}
+        if origin is not None:
+            headers["Origin"] = origin
+        def submit(value):
+            request = urllib.request.Request(base + "/login", data=urlencode({"query": query, "nonce": value}).encode(), headers=headers)
+            try:
+                with opener.open(request) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                return error.code
+        assert submit("") == 403
+        assert submit(nonce) == expected
+        assert submit(nonce) == 403
+        assert login.await_count == (1 if expected == 200 else 0)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_helper_posts_session_without_writing_credentials(monkeypatch):
     helper = helper_module()
     opener = Mock()

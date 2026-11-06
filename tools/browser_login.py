@@ -9,8 +9,10 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import secrets
 import sys
 import threading
+import time
 from urllib.parse import parse_qs, urlsplit
 import urllib.request
 
@@ -20,6 +22,24 @@ api = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = api
 spec.loader.exec_module(api)
 LOCK = threading.Lock()
+FORMS = {}
+FORMS_LOCK = threading.Lock()
+
+
+def form_ticket(query):
+    with FORMS_LOCK:
+        for key, (_, expires) in list(FORMS.items()):
+            if expires <= time.monotonic():
+                FORMS.pop(key, None)
+        nonce = secrets.token_hex(32)
+        FORMS[nonce] = (query, time.monotonic() + 900)
+        return nonce
+
+
+def consume_form(nonce, query):
+    with FORMS_LOCK:
+        saved = FORMS.pop(nonce, None)
+    return bool(saved and saved[0] == query and saved[1] > time.monotonic())
 
 
 def parameters(query):
@@ -103,18 +123,22 @@ class Handler(BaseHTTPRequestHandler):
                   + '</b></p><p>登录后，会话仅回传给此 Home Assistant：<b>' + escape(callback)
                   + '</b></p><p>默认勾选记住我。请在新窗口完成密码、极验及其他验证。</p>'
                   + '<form method="post" action="/login"><input type="hidden" name="query" value="'
-                  + escape(query, quote=True) + '"><button type="submit">打开网页并登录</button></form>')
+                  + escape(query, quote=True) + '"><input type="hidden" name="nonce" value="'
+                  + form_ticket(query) + '"><button type="submit">打开网页并登录</button></form>')
 
     def do_POST(self):
         if (self.path != "/login" or self.headers.get("Host") != "127.0.0.1:18765"
-                or self.headers.get("Origin") != "http://127.0.0.1:18765"):
+                or self.headers.get("Origin") not in (None, "null", "http://127.0.0.1:18765")):
             return self.html("请从助手的确认页面操作。", 403)
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 < length <= 8192:
                 raise ValueError()
-            query = parse_qs(self.rfile.read(length).decode())["query"][0]
+            form = parse_qs(self.rfile.read(length).decode())
+            query = form["query"][0]
             site, callback, token = parameters(query)
+            if not consume_form(form.get("nonce", [""])[0], query):
+                return self.html("确认页已过期或已使用，请从 HA 重新打开登录链接。", 403)
         except (ValueError, KeyError, UnicodeError):
             return self.html("请求无效。", 400)
         if not LOCK.acquire(blocking=False):
