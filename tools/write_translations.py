@@ -12,15 +12,16 @@ errors = {
     "telegram_pending": "机器人尚未确认，请发送六位码后再次提交。",
     "telegram_expired": "验证码已过期，再次提交以获取新的六位码。",
     "invalid_schedule": "时间或时区格式不正确，例如 09:00:00、Asia/Hong_Kong。",
+    "browser_pending": "尚未收到浏览器会话。请点击登录链接，在助手窗口登录；显示回传成功后再次提交。",
+    "browser_url_missing": "无法取得 HA 地址，请先在 HA 网络设置中配置本机可访问的 Home Assistant URL。",
 }
 steps = {
     "login": {"title": "域名与登录方式", "description": "域名变更后可在此重新配置。账户密码和 Telegram 登录均默认记住我。",
               "data": {"base_url": "网页域名", "login_method": "登录方式"}},
-    "password": {"title": "账户密码登录", "description": "默认记住我。若网站要求极验，请先运行 tools/verify.py，在浏览器登录后，将 .local/session-cookie.json 的完整内容粘贴到登录会话。已有会话时可留空账户和密码。",
-                 "data": {"email": "账户 / 邮箱", "password": "密码", "session_cookie": "登录会话（极验或二次验证后导入）"}},
+    "password": {"title": "网页账户登录", "description": "请先在正在使用 HA 的电脑上运行 `python tools/browser_login.py`（首次安装 `python -m pip install aiohttp playwright`）。\n\n[打开登录网页]({login_url})\n\n在助手确认页点击打开网页，默认勾选记住我。完成账户密码及网页验证后，会话会自动回传 HA，无需复制 Cookie。助手显示回传成功后，返回此处点击提交。链接有效期 15 分钟，过期后提交获取新链接。手机或其他电脑不能复用这台电脑的本机助手。"},
     "telegram": {"title": "Telegram 机器人登录", "description": "本次六位验证码：**{code}**\n\n请手动发送给机器人 **@{bot}**。发送后点击提交检查登录结果；未确认可再次提交。验证码仅用于本次登录。默认启用记住我，登录会话将保存并复用。"},
     "settings": {"title": "自动签到设置", "description": "浮动分钟数表示基准时间前后各可浮动的范围，最多 ±300 分钟（5 小时）。靠近午夜时限制在当天。",
-                 "data": {"auto_checkin": "启用自动签到", "checkin_time": "每日签到基准时间", "jitter_minutes": "上下浮动分钟数（0–300）", "timezone": "网站及签到时区", "notify_success": "签到成功时显示通知"}},
+                 "data": {"auto_checkin": "启用自动签到", "checkin_time": "每日签到基准时间", "jitter_minutes": "上下浮动分钟数（0–300）", "timezone": "网站及签到时区", "notify_success": "签到成功时显示通知", "refresh_interval_hours": "状态查询间隔（1–12 小时）", "refresh_jitter_hours": "状态查询前后浮动（0.5–2 小时）"}},
     "init": {"title": "autocheck_VPN 配置", "menu_options": {"settings": "自动签到设置", "login": "修改域名 / 重新登录"}},
 }
 data = {

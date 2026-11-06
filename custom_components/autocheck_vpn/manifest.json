@@ -1,7 +1,7 @@
 {
   "domain": "autocheck_vpn",
   "name": "autocheck_VPN",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "config_flow": true,
   "documentation": "https://github.com/aemediatodd/autocheck_VPN",
   "codeowners": [
@@ -11,7 +11,8 @@
   "integration_type": "service",
   "requirements": [],
   "dependencies": [
-    "persistent_notification"
+    "persistent_notification",
+    "http"
   ],
   "issue_tracker": "https://github.com/aemediatodd/autocheck_VPN/issues"
 }

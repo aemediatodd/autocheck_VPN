@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 import logging
+import random
 from zoneinfo import ZoneInfo
 
 from homeassistant.components import persistent_notification
@@ -22,7 +23,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class AutoCheckCoordinator(DataUpdateCoordinator):
     def __init__(self, hass, entry):
-        super().__init__(hass, _LOGGER, name=NAME, update_interval=timedelta(minutes=15), config_entry=entry)
+        super().__init__(hass, _LOGGER, name=NAME, update_interval=None, config_entry=entry)
         self.entry = entry
         self.client = AutoCheckClient(entry.data["base_url"], entry.data.get("session"))
         self.store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}")
@@ -32,6 +33,9 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
         self.random_target: datetime | None = None
         self._cancel_timer = None
         self._timer_task = None
+        self.next_refresh: datetime | None = None
+        self._cancel_refresh = None
+        self._refresh_task = None
         self._attempts = 0
         self._closed = False
         self.data = self.snapshot("unknown")
@@ -51,6 +55,7 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
             "last_was_performed": self.history.last_was_performed,
             "next_run": self.next_run.isoformat() if self.next_run else None,
             "random_target": self.random_target.isoformat() if self.random_target else None,
+            "next_refresh": self.next_refresh.isoformat() if self.next_refresh else None,
         }
 
     async def async_initialize(self):
@@ -86,6 +91,7 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
 
     async def _confirm(self, reward=None, performed=False):
         added = self.history.confirm(self.now(), reward, performed)
+        self.plan()
         await self.save()
         if added and self.entry.options.get("notify_success", True):
             persistent_notification.async_create(self.hass,
@@ -93,13 +99,18 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
                 + f"累计 {self.history.total} 次，连续 {self.history.streak} 天。",
                 title=NAME, notification_id=f"{DOMAIN}_{self.entry.entry_id}_success")
 
-    async def _operate(self, checkin=False):
+    async def _operate(self, checkin=False, skip_completed=False):
         async with self.lock:
             try:
+                observed_day = self.now().date()
+                if checkin and skip_completed and self.history.last_day == observed_day.isoformat():
+                    return self.snapshot("checked_in")
                 if checkin:
                     page, reward, performed = await self.client.checkin()
                 else:
                     page, reward, performed = await self.client.status(), None, False
+                if self.now().date() != observed_day:
+                    raise AutoCheckError("Date changed during request; refresh again to confirm today's status")
                 if page.checked_in:
                     await self._confirm(reward, performed)
                 await self._save_session()
@@ -116,10 +127,30 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
                 return self.snapshot("error", str(err))
 
     async def _async_update_data(self):
-        return await self._operate()
+        result = await self._operate()
+        self.plan_refresh()
+        result["next_refresh"] = self.next_refresh.isoformat() if self.next_refresh else None
+        return result
 
-    async def async_checkin(self):
-        result = await self._operate(checkin=True)
+    def plan_refresh(self):
+        if self._cancel_refresh:
+            self._cancel_refresh()
+            self._cancel_refresh = None
+        if self._closed:
+            return
+        hours = self.entry.options.get("refresh_interval_hours", 6)
+        jitter = self.entry.options.get("refresh_jitter_hours", 1)
+        # A large jitter must never produce a zero or negative interval.
+        delay = random.SystemRandom().uniform(max(1 / 60, hours - jitter), hours + jitter)
+        self.next_refresh = self.now() + timedelta(hours=delay)
+        self._cancel_refresh = async_track_point_in_utc_time(self.hass, self._on_refresh_due, self.next_refresh)
+
+    @callback
+    def _on_refresh_due(self, _now):
+        self._refresh_task = self.hass.async_create_task(self.async_refresh())
+
+    async def async_checkin(self, *, automatic=False):
+        result = await self._operate(checkin=True, skip_completed=automatic)
         self.async_set_updated_data(result)
         return result
 
@@ -133,6 +164,14 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
             self.async_set_updated_data(self.snapshot(self.data["status"], self.data.get("error")))
             return
         now = self.now()
+        if self.history.last_day == now.date().isoformat() and (
+            self.next_run is None or self.next_run.astimezone(now.tzinfo).date() <= now.date()
+        ):
+            self._attempts = 0
+            self.next_run = daily_target(now.date() + timedelta(days=1),
+                self.entry.options.get("checkin_time", DEFAULT_TIME),
+                self.entry.options.get("jitter_minutes", 30), str(now.tzinfo))
+            self.random_target = self.next_run
         if self.next_run is None or self.next_run.astimezone(now.tzinfo).date() < now.date():
             self.next_run = daily_target(now.date(), self.entry.options.get("checkin_time", DEFAULT_TIME),
                 self.entry.options.get("jitter_minutes", 30), str(now.tzinfo))
@@ -158,7 +197,7 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
 
     async def _run_scheduled(self):
         try:
-            result = await self.async_checkin()
+            result = await self.async_checkin(automatic=True)
             self._attempts += 1
             now = self.now()
             retry = now + timedelta(minutes=15)
@@ -168,10 +207,11 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
                 self.next_run = retry
             else:
                 self._attempts = 0
-                self.next_run = daily_target(now.date() + timedelta(days=1),
-                    self.entry.options.get("checkin_time", DEFAULT_TIME),
-                    self.entry.options.get("jitter_minutes", 30), str(now.tzinfo))
-                self.random_target = self.next_run
+                if self.next_run is None or self.next_run.date() <= now.date():
+                    self.next_run = daily_target(now.date() + timedelta(days=1),
+                        self.entry.options.get("checkin_time", DEFAULT_TIME),
+                        self.entry.options.get("jitter_minutes", 30), str(now.tzinfo))
+                    self.random_target = self.next_run
             self.plan()
             await self.save()
         finally:
@@ -180,6 +220,14 @@ class AutoCheckCoordinator(DataUpdateCoordinator):
     async def async_close(self):
         self._closed = True
         await self.async_shutdown()
+        if self._cancel_refresh:
+            self._cancel_refresh()
+        if self._refresh_task:
+            self._refresh_task.cancel()
+            try:
+                await self._refresh_task
+            except asyncio.CancelledError:
+                pass
         if self._cancel_timer:
             self._cancel_timer()
         if self._timer_task:

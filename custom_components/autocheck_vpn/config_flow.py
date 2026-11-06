@@ -3,14 +3,17 @@ from __future__ import annotations
 
 from http.cookies import SimpleCookie
 import json
+import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers import selector
 
-from .api import AutoCheckClient, AutoCheckError, LoginRequired, VerificationRequired, normalize_url
+from .api import AutoCheckClient, AutoCheckError, VerificationRequired, normalize_url
+from homeassistant.helpers.network import NoURLAvailableError
 from .const import DEFAULT_TIME, DEFAULT_TIMEZONE, DEFAULT_URL, DOMAIN, NAME
+from .browser_login import begin, registry
 
 
 def parse_cookies(raw: str) -> dict[str, str]:
@@ -39,6 +42,9 @@ class LoginMixin:
     _draft: dict
     _challenge: dict | None = None
     _challenge_cookies: dict | None = None
+    _browser_ticket = None
+    _browser_token = None
+    _browser_url = None
 
     async def async_step_login(self, user_input=None):
         errors = {}
@@ -52,6 +58,9 @@ class LoginMixin:
                 errors["base_url"] = "invalid_url"
             else:
                 self._challenge = None
+                if self._browser_token:
+                    registry(self.hass).pop(self._browser_token, None)
+                    self._browser_ticket = None
                 if self._draft["login_method"] == "telegram":
                     return await self.async_step_telegram()
                 return await self.async_step_password()
@@ -59,37 +68,25 @@ class LoginMixin:
 
     async def async_step_password(self, user_input=None):
         errors = {}
-        if user_input is not None:
-            client = None
+        if self._browser_ticket and self._browser_ticket["expires"] <= time.monotonic():
+            registry(self.hass).pop(self._browser_token, None)
+            self._browser_ticket = None
+        if not self._browser_ticket:
             try:
-                raw = user_input.get("session_cookie", "").strip()
-                cookies = parse_cookies(raw) if raw else None
-                client = AutoCheckClient(self._draft["base_url"], cookies)
-                if raw:
-                    await client.status()
-                else:
-                    if not user_input.get("email") or not user_input.get("password"):
-                        raise LoginRequired("Missing account")
-                    await client.password_login(user_input["email"], user_input["password"])
-                self._draft.update(session=client.cookies(), email=user_input.get("email", ""))
-                # Password is used only for the login request; persisted session is sufficient.
-                return await self._login_complete()
-            except VerificationRequired:
-                errors["base"] = "verification_required"
-            except LoginRequired:
-                errors["base"] = "invalid_auth"
-            except (ValueError, TypeError):
-                errors["base"] = "invalid_cookie"
-            except AutoCheckError:
-                errors["base"] = "cannot_connect"
-            finally:
-                if client:
-                    await client.close()
-        return self.async_show_form(step_id="password", errors=errors, data_schema=vol.Schema({
-            vol.Optional("email", default=self._draft.get("email", "")): str,
-            vol.Optional("password"): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
-            vol.Optional("session_cookie"): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
-        }))
+                self._browser_token, self._browser_ticket, self._browser_url = begin(self.hass, self._draft["base_url"])
+            except NoURLAvailableError:
+                # HA may not have a configured internal/external URL yet.
+                errors["base"] = "browser_url_missing"
+        if self._browser_ticket and self._browser_ticket["session"]:
+            self._draft["session"] = self._browser_ticket["session"]
+            self._draft.pop("email", None)
+            registry(self.hass).pop(self._browser_token, None)
+            self._browser_ticket = None
+            return await self._login_complete()
+        if user_input is not None and not errors:
+            errors["base"] = "browser_pending"
+        return self.async_show_form(step_id="password", errors=errors, data_schema=vol.Schema({}),
+            description_placeholders={"login_url": self._browser_url or "http://127.0.0.1:18765"})
 
     async def async_step_telegram(self, user_input=None):
         errors = {}
@@ -175,6 +172,8 @@ class AutoCheckOptionsFlow(LoginMixin, config_entries.OptionsFlow):
             vol.Required("jitter_minutes", default=values.get("jitter_minutes", 30)): vol.All(vol.Coerce(int), vol.Range(min=0, max=300)),
             vol.Required("timezone", default=values.get("timezone", DEFAULT_TIMEZONE)): str,
             vol.Required("notify_success", default=values.get("notify_success", True)): bool,
+            vol.Required("refresh_interval_hours", default=values.get("refresh_interval_hours", 6)): vol.All(vol.Coerce(float), vol.Range(min=1, max=12)),
+            vol.Required("refresh_jitter_hours", default=values.get("refresh_jitter_hours", 1)): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=2)),
         })
         return self.async_show_form(step_id="settings", data_schema=schema, errors=errors)
 

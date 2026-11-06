@@ -85,7 +85,7 @@ async def test_restart_preserves_today_random_target_and_history(tmp_path, monke
         await coordinator.async_initialize()
         assert coordinator.next_run == target
         assert coordinator.history.total == 1
-        assert timer.call_args.args[-1] == target
+        assert any(call.args[-1] == target for call in timer.call_args_list)
     finally:
         await coordinator.async_close()
 
@@ -153,5 +153,95 @@ async def test_retry_cannot_exceed_eight_oclock_upper_bound(tmp_path, monkeypatc
         await coordinator._run_scheduled()
         assert coordinator.next_run.date() == NOW.date() + timedelta(days=1)
         assert 0 <= coordinator.next_run.hour <= 8
+    finally:
+        await coordinator.async_close()
+
+
+@pytest.mark.asyncio
+async def test_fresh_success_cancels_today_and_keeps_tomorrow_target(tmp_path, monkeypatch, notifications):
+    coordinator, _ = make_coordinator(tmp_path, monkeypatch)
+    coordinator.next_run = NOW + timedelta(minutes=20)
+    cancel = Mock()
+    coordinator._cancel_timer = cancel
+    coordinator.client.status = AsyncMock(return_value=PageStatus(True, "明日再来"))
+    try:
+        await coordinator.async_refresh()
+        cancel.assert_called_once()
+        tomorrow = coordinator.next_run
+        assert tomorrow.date() == NOW.date() + timedelta(days=1)
+        assert coordinator.data["status"] == "checked_in"
+        await coordinator.async_refresh()
+        assert coordinator.next_run == tomorrow
+        coordinator.client.checkin = AsyncMock()
+        await coordinator.async_checkin(automatic=True)
+        coordinator.client.checkin.assert_not_awaited()
+        assert coordinator.store.async_save.call_args.args[0]["next_run"] == tomorrow.isoformat()
+    finally:
+        await coordinator.async_close()
+
+
+@pytest.mark.asyncio
+async def test_yesterday_success_does_not_cancel_today_and_next_day_runs(tmp_path, monkeypatch, notifications):
+    coordinator, _ = make_coordinator(tmp_path, monkeypatch)
+    coordinator.history.confirm(NOW - timedelta(days=1))
+    target = NOW + timedelta(minutes=20)
+    coordinator.next_run = target
+    try:
+        coordinator.plan()
+        assert coordinator.next_run == target
+        coordinator.client.checkin = AsyncMock(return_value=(PageStatus(True, "明日再来"), "512 MB", True))
+        await coordinator.async_checkin()
+        coordinator.now = lambda: NOW + timedelta(days=1)
+        await coordinator.async_checkin()
+        assert coordinator.client.checkin.await_count == 2
+        assert coordinator.history.total == 3
+    finally:
+        await coordinator.async_close()
+
+
+@pytest.mark.asyncio
+async def test_response_crossing_midnight_cannot_cancel_new_day(tmp_path, monkeypatch, notifications):
+    coordinator, _ = make_coordinator(tmp_path, monkeypatch)
+    async def status():
+        coordinator.now = lambda: NOW + timedelta(days=1)
+        return PageStatus(True, "明日再来")
+    coordinator.client.status = status
+    try:
+        result = await coordinator._operate()
+        assert result["status"] == "error"
+        assert coordinator.history.total == 0
+    finally:
+        await coordinator.async_close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options,low,high", [({}, 5, 7),
+    ({"refresh_interval_hours": 12, "refresh_jitter_hours": 0.5}, 11.5, 12.5),
+    ({"refresh_interval_hours": 1, "refresh_jitter_hours": 2}, 1 / 60, 3)])
+async def test_refresh_ranges_and_replaces_previous_timer(tmp_path, monkeypatch, notifications, options, low, high):
+    coordinator, _ = make_coordinator(tmp_path, monkeypatch, options)
+    try:
+        for _ in range(20):
+            coordinator.plan_refresh()
+            hours = (coordinator.next_refresh - NOW).total_seconds() / 3600
+            assert low <= hours <= high
+        assert coordinator.update_interval is None
+        cancel = coordinator._cancel_refresh
+        previous_count = cancel.call_count
+        await coordinator.async_close()
+        assert cancel.call_count == previous_count + 1
+    finally:
+        await coordinator.client.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_still_schedules_next_query(tmp_path, monkeypatch, notifications):
+    coordinator, _ = make_coordinator(tmp_path, monkeypatch)
+    coordinator.client.status = AsyncMock(side_effect=AutoCheckError("network"))
+    try:
+        await coordinator.async_refresh()
+        assert coordinator.data["status"] == "error"
+        assert coordinator.data["next_refresh"] == coordinator.next_refresh.isoformat()
+        assert coordinator.next_refresh > NOW
     finally:
         await coordinator.async_close()

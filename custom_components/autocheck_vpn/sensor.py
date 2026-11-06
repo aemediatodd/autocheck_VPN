@@ -47,7 +47,8 @@ class AutoCheckSensor(AutoCheckEntity, SensorEntity):
                         "random_target": self.coordinator.data.get("random_target"),
                         "window_start": start.isoformat(), "window_end": end.isoformat()}
         if self.entity_description.key == "status":
-            return {"last_error": self.coordinator.data.get("error")}
+            return {"last_error": self.coordinator.data.get("error"),
+                    "next_refresh": self.coordinator.data.get("next_refresh")}
         if self.entity_description.key == "last_reward":
             return {"reward_date": self.coordinator.data.get("last_reward_day")}
         if self.entity_description.key == "last_success":

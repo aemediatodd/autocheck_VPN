@@ -1,10 +1,11 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
+import time
 
 import pytest
 import voluptuous as vol
 
 from custom_components.autocheck_vpn import config_flow as module
-from custom_components.autocheck_vpn.api import VerificationRequired
 from custom_components.autocheck_vpn.config_flow import AutoCheckConfigFlow, AutoCheckOptionsFlow, parse_cookies
 
 
@@ -50,21 +51,25 @@ async def test_telegram_flow_displays_code_and_waits_for_confirmation(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_password_captcha_error_offers_session_import(monkeypatch):
-    class Client:
-        def __init__(self, *args):
-            pass
-        async def password_login(self, *args):
-            raise VerificationRequired("captcha")
-        async def close(self):
-            pass
-    monkeypatch.setattr(module, "AutoCheckClient", Client)
+async def test_password_opens_browser_handoff_and_saves_returned_session(monkeypatch):
+    ticket = {"expires": time.monotonic() + 900, "session": None}
+    pending = {"test-token": ticket}
+    monkeypatch.setattr(module, "begin", Mock(return_value=("test-token", ticket, "http://127.0.0.1:18765/?test")))
+    monkeypatch.setattr(module, "registry", lambda hass: pending)
     flow = config_flow()
+    flow.hass = SimpleNamespace()
     await flow.async_step_user()
-    await flow.async_step_login({"base_url": "https://vpn.example.com", "login_method": "password"})
-    result = await flow.async_step_password({"email": "test@example.invalid", "password": "fake-test-password"})
-    assert result["errors"]["base"] == "verification_required"
-    assert "fake-test-password" not in str(flow._draft)
+    result = await flow.async_step_login({"base_url": "https://vpn.example.com", "login_method": "password"})
+    assert result["description_placeholders"]["login_url"].startswith("http://127.0.0.1:18765/")
+    assert result["data_schema"]({}) == {}
+    result = await flow.async_step_password({})
+    assert result["errors"]["base"] == "browser_pending"
+    ticket["session"] = {"test-session": "fake-value"}
+    result = await flow.async_step_password({})
+    assert result["type"] == "create_entry"
+    assert result["data"]["session"] == {"test-session": "fake-value"}
+    assert "password" not in result["data"]
+    assert not pending
 
 
 @pytest.mark.asyncio
@@ -77,6 +82,12 @@ async def test_options_bound_jitter_and_validate_timezone():
     schema = result["data_schema"]
     values = {"auto_checkin": True, "checkin_time": "03:00:00", "jitter_minutes": 300, "timezone": "Asia/Hong_Kong", "notify_success": True}
     assert schema(values)["jitter_minutes"] == 300
+    assert schema(values)["refresh_interval_hours"] == 6
+    assert schema(values)["refresh_jitter_hours"] == 1
+    for key, value in [("refresh_interval_hours", 0.9), ("refresh_interval_hours", 12.1),
+                       ("refresh_jitter_hours", 0.4), ("refresh_jitter_hours", 2.1)]:
+        with pytest.raises(vol.Invalid):
+            schema({**values, key: value})
     with pytest.raises(vol.Invalid):
         schema({**values, "jitter_minutes": 301})
     result = await flow.async_step_settings({**values, "timezone": "invalid-zone"})
